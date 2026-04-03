@@ -1,0 +1,1 @@
+pjhttptr is a small HTTP "traceroute" style took that shows the IP of the website you are hitting (and also includes DNS), and then shows you the number of bytes received, and follows any HTTP redirects, and also shows you the IP and DNS of each redirected site and the number of bytes received.  It is written in Python.
