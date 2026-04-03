@@ -7,11 +7,12 @@
 #
 """pjhttptr - HTTP traceroute: follow redirects showing DNS, IP, and bytes at each hop."""
 
+import argparse
 import socket
 import sys
 from urllib.parse import urlparse
 
-import requests
+import httpx
 
 
 def resolve_host(hostname):
@@ -27,38 +28,42 @@ def resolve_host(hostname):
     return ip, rdns
 
 
-def trace_url(url):
+def trace_url(url, http_version):
     """Follow HTTP redirects, printing DNS/IP/bytes at each hop."""
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
     hop = 0
-    print(f"\nTracing: {url}\n")
-    print(f"{'Hop':<5} {'Status':<8} {'Bytes':>10}  {'IP':<16} {'DNS':<40} {'URL'}")
-    print("-" * 130)
+    proto_label = f"HTTP/{http_version}"
+    print(f"\nTracing: {url}  ({proto_label})\n")
+    print(f"{'Hop':<5} {'Status':<8} {'Proto':<10} {'Bytes':>10}  {'IP':<16} {'DNS':<40} {'URL'}")
+    print("-" * 140)
 
-    session = requests.Session()
-    session.max_redirects = 30
+    use_http2 = (http_version == "2")
+    client = httpx.Client(http2=use_http2, follow_redirects=False,
+                          timeout=10.0, max_redirects=30)
 
     try:
-        resp = session.get(url, allow_redirects=False, timeout=10)
-    except requests.RequestException as e:
+        resp = client.get(url)
+    except httpx.HTTPError as e:
         print(f"Error connecting to {url}: {e}")
+        client.close()
         return
 
     while True:
-        parsed = urlparse(resp.url)
+        parsed = urlparse(str(resp.url))
         hostname = parsed.hostname
         ip, rdns = resolve_host(hostname)
         ip_str = ip or "N/A"
         dns_str = rdns if rdns and rdns != hostname else hostname
         nbytes = len(resp.content)
         status = resp.status_code
+        resp_proto = resp.http_version
 
-        print(f"{hop:<5} {status:<8} {nbytes:>10}  {ip_str:<16} {dns_str:<40} {resp.url}")
+        print(f"{hop:<5} {status:<8} {resp_proto:<10} {nbytes:>10}  {ip_str:<16} {dns_str:<40} {str(resp.url)}")
 
-        if resp.is_redirect or resp.is_permanent_redirect:
-            location = resp.headers.get("Location")
+        if status in (301, 302, 303, 307, 308):
+            location = resp.headers.get("location")
             if not location:
                 break
             # Handle relative redirects
@@ -66,13 +71,15 @@ def trace_url(url):
                 location = f"{parsed.scheme}://{parsed.netloc}{location}"
             hop += 1
             try:
-                resp = session.get(location, allow_redirects=False, timeout=10)
-            except requests.RequestException as e:
+                resp = client.get(location)
+            except httpx.HTTPError as e:
                 print(f"\nError following redirect to {location}: {e}")
+                client.close()
                 return
         else:
             break
 
+    client.close()
     print()
 
 
@@ -89,12 +96,20 @@ def print_banner():
 def main():
     print_banner()
 
-    if len(sys.argv) < 2:
-        print(f"\nUsage: {sys.argv[0]} <url> [url ...]")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="HTTP traceroute: follow redirects showing DNS, IP, and bytes at each hop.")
+    parser.add_argument("urls", nargs="+", metavar="URL", help="one or more URLs to trace")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--http1.1", dest="http_version", action="store_const",
+                       const="1.1", help="force HTTP/1.1")
+    group.add_argument("--http2", dest="http_version", action="store_const",
+                       const="2", help="force HTTP/2")
+    parser.set_defaults(http_version="1.1")
 
-    for url in sys.argv[1:]:
-        trace_url(url)
+    args = parser.parse_args()
+
+    for url in args.urls:
+        trace_url(url, args.http_version)
 
 
 if __name__ == "__main__":
