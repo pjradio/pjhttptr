@@ -10,6 +10,7 @@
 import argparse
 import socket
 import sys
+import time
 from urllib.parse import urlparse
 
 import httpx
@@ -36,15 +37,17 @@ def trace_url(url, http_version):
     hop = 0
     proto_label = f"HTTP/{http_version}"
     print(f"\nTracing: {url}  ({proto_label})\n")
-    print(f"{'Hop':<5} {'Status':<8} {'Proto':<10} {'Bytes':>10}  {'IP':<16} {'DNS':<40} {'URL'}")
-    print("-" * 140)
+    print(f"{'Hop':<5} {'Time':>8}  {'Status':<8} {'Proto':<10} {'Bytes':>10}  {'IP':<16} {'DNS':<56} {'URL'}")
+    print("-" * 170)
 
     use_http2 = (http_version == "2")
     client = httpx.Client(http2=use_http2, follow_redirects=False,
                           timeout=10.0, max_redirects=30)
 
     try:
+        t0 = time.monotonic()
         resp = client.get(url)
+        elapsed_ms = (time.monotonic() - t0) * 1000
     except httpx.HTTPError as e:
         print(f"Error connecting to {url}: {e}")
         client.close()
@@ -60,7 +63,8 @@ def trace_url(url, http_version):
         status = resp.status_code
         resp_proto = resp.http_version
 
-        print(f"{hop:<5} {status:<8} {resp_proto:<10} {nbytes:>10}  {ip_str:<16} {dns_str:<40} {str(resp.url)}")
+        time_str = f"{elapsed_ms:.0f}ms"
+        print(f"{hop:<5} {time_str:>8}  {status:<8} {resp_proto:<10} {nbytes:>10}  {ip_str:<16} {dns_str:<56} {str(resp.url)}")
 
         if status in (301, 302, 303, 307, 308):
             location = resp.headers.get("location")
@@ -71,7 +75,9 @@ def trace_url(url, http_version):
                 location = f"{parsed.scheme}://{parsed.netloc}{location}"
             hop += 1
             try:
+                t0 = time.monotonic()
                 resp = client.get(location)
+                elapsed_ms = (time.monotonic() - t0) * 1000
             except httpx.HTTPError as e:
                 print(f"\nError following redirect to {location}: {e}")
                 client.close()
@@ -83,21 +89,20 @@ def trace_url(url, http_version):
     print()
 
 
-def print_banner():
-    """Print the startup title banner."""
-    print("=" * 70)
-    print("  pjhttptr - HTTP Traceroute")
-    print("  Copyright (c) 2026, The Regents of the University of California.")
-    print("  All rights reserved.")
-    print("  Author: Phil Jensen <pjensen3@ucmerced.edu>")
-    print("=" * 70)
+VERSION = "1.0.0"
+
+VERSION_TEXT = (
+    "pjhttptr " + VERSION + " - HTTP Traceroute\n"
+    "Copyright (c) 2026, The Regents of the University of California.\n"
+    "All rights reserved.\n"
+    "Author: Phil Jensen <pjensen3@ucmerced.edu>"
+)
 
 
 def main():
-    print_banner()
-
     parser = argparse.ArgumentParser(
         description="HTTP traceroute: follow redirects showing DNS, IP, and bytes at each hop.")
+    parser.add_argument("--version", action="version", version=VERSION_TEXT)
     parser.add_argument("urls", nargs="+", metavar="URL", help="one or more URLs to trace")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--http1.1", dest="http_version", action="store_const",
