@@ -101,7 +101,8 @@ VERSION_TEXT = (
 
 def main():
     parser = argparse.ArgumentParser(
-        description="HTTP traceroute: follow redirects showing DNS, IP, and bytes at each hop.")
+        description="HTTP traceroute: follow redirects showing DNS, IP, and bytes at each hop.",
+        formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument("--version", action="version", version=VERSION_TEXT)
     parser.add_argument("urls", nargs="+", metavar="URL", help="one or more URLs to trace")
     group = parser.add_mutually_exclusive_group()
